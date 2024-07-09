@@ -98,8 +98,8 @@ func forceQuitTest() (bool, int, int) {
 			time.Sleep(forceQuitFQSleepTime)
 		}
 
-		idxInArray := nodesInNetwork[rand.Intn(len(nodesInNetwork))]
-		nodes[idxInArray].Traverse((*nodeAddresses)[idxInArray], nil)
+		// idxInArray := nodesInNetwork[rand.Intn(len(nodesInNetwork))]
+		// nodes[idxInArray].Traverse((*nodeAddresses)[idxInArray], nil)
 
 		/* Get all data. */
 		getInfo := testInfo{
