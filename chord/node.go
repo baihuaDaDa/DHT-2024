@@ -11,6 +11,7 @@ package chord
 import (
 	rpc "dht/rpcNode"
 	"errors"
+	"fmt"
 	"time"
 
 	"math/big"
@@ -43,9 +44,9 @@ type ValueReply struct {
 	Ok    bool
 }
 
-type PredecessorState struct {
-	Predecessor string
-	Online      bool
+type TransferTarget struct {
+	Pre    string
+	Prepre string
 }
 
 const sucSize int = 10
@@ -67,7 +68,6 @@ type Node struct {
 	fingerLock  sync.RWMutex
 
 	predecessor string
-	predeOnline bool
 	predeLock   sync.RWMutex
 
 	successorList [sucSize]string
@@ -79,7 +79,7 @@ type Node struct {
 // Initialize a node.
 // Addr is the address and port number of the node, e.g., "localhost:1234".
 func (node *Node) Init(addr string) {
-	logrus.Infof("Init %s", addr)
+	// logrus.Infof("Init %s", addr)
 	node.addr = addr
 	node.id = Hash(node.addr)
 	node.online = false
@@ -93,11 +93,10 @@ func (node *Node) Init(addr string) {
 }
 
 func (node *Node) refresh() {
-	logrus.Infof("Refresh %s", node.addr)
+	// logrus.Infof("Refresh %s", node.addr)
 	node.run = make(chan bool, 1)
 	node.predeLock.Lock()
 	node.predecessor = ""
-	node.predeOnline = false
 	node.predeLock.Unlock()
 	node.dataLock.Lock()
 	node.data = make(map[string]string)
@@ -122,7 +121,7 @@ func (node *Node) refresh() {
 //
 
 func (node *Node) Run() {
-	logrus.Infof("Run %s", node.addr)
+	// logrus.Infof("Run %s", node.addr)
 	node.refresh()
 	node.online = true
 	node.Register("Chord", node)
@@ -130,7 +129,7 @@ func (node *Node) Run() {
 }
 
 func (node *Node) Create() {
-	logrus.Infof("Create")
+	// logrus.Infof("Create")
 	node.predeLock.Lock()
 	node.predecessor = node.addr
 	node.predeLock.Unlock()
@@ -139,7 +138,7 @@ func (node *Node) Create() {
 }
 
 func (node *Node) Join(addr string) bool {
-	logrus.Infof("Join %s to %s", node.addr, addr)
+	// logrus.Infof("Join %s to %s", node.addr, addr)
 	// predecessor
 	node.predeLock.Lock()
 	node.predecessor = ""
@@ -148,7 +147,7 @@ func (node *Node) Join(addr string) bool {
 	var successor string
 	<-node.run // run until Run() returns
 	if err := node.RemoteCall(addr, "Chord.FindSuccessor", node.id, &successor); err != nil {
-		logrus.Fatal("——Join err: cannot find successor")
+		// logrus.Error("Join err: cannot find successor")
 		return false
 	}
 	node.sucLock.Lock()
@@ -160,11 +159,11 @@ func (node *Node) Join(addr string) bool {
 }
 
 func (node *Node) Put(key string, value string) bool {
-	logrus.Infof("Put %s %s", key, value)
+	// logrus.Infof("Put %s %s", key, value)
 	var target string
 	keyId := Hash(key)
 	if err := node.FindSuccessor(keyId, &target); err != nil {
-		logrus.Fatal("find successor error when putting data: ", err)
+		// logrus.Error("find successor error when putting data: ", err)
 		return false
 	}
 	var (
@@ -173,61 +172,62 @@ func (node *Node) Put(key string, value string) bool {
 	)
 	data = append(data, Pair{key, value})
 	if err := node.RemoteCall(target, "Chord.PutAndReplicate", data, &reply); err != nil {
-		logrus.Fatal("call remotely \"PutAndreplicate()\" error when putting data: ", err)
+		// logrus.Error("call remotely \"PutAndReplicate()\" error when putting data: ", err)
 		return false
 	}
 	return true
 }
 
 func (node *Node) Get(key string) (bool, string) {
-	logrus.Infof("Get %s", key)
+	// logrus.Infof("Get %s", key)
 	keyId := Hash(key)
 	var successor string
 	if err := node.FindSuccessor(keyId, &successor); err != nil {
-		logrus.Fatal("find successor error when getting data: ", err)
+		// logrus.Error("find successor error when getting data: ", err)
 		return false, ""
 	}
 	var reply ValueReply
 	if err := node.RemoteCall(successor, "Chord.GetPair", key, &reply); err != nil {
-		logrus.Fatal("call remotely \"GetPair()\" error when getting data: ", err)
+		// logrus.Error("call remotely \"GetPair()\" error when getting data: ", err)
 		return false, ""
 	}
 	return reply.Ok, reply.Value
 }
 
 func (node *Node) Delete(key string) bool {
-	logrus.Infof("Delete %s", key)
+	// logrus.Infof("Delete %s", key)
 	keyId := Hash(key)
 	var successor string
 	if err := node.FindSuccessor(keyId, &successor); err != nil {
-		logrus.Fatal("find successor error when deleting data: ", err)
+		// logrus.Error("find successor error when deleting data: ", err)
 		return false
 	}
 	var reply bool
 	if err := node.RemoteCall(successor, "Chord.DeleteAllData", []string{key}, &reply); err != nil {
-		logrus.Fatal("call remotely \"DeleteAllData()\" error when deleting data: ", err)
+		// logrus.Error("call remotely \"DeleteAllData()\" error when deleting data: ", err)
 		return false
 	}
 	return reply
 }
 
 func (node *Node) Quit() {
-	logrus.Infof("Quit %s", node.addr)
+	// logrus.Infof("Quit %s", node.addr)
 	if !node.online {
-		logrus.Error("already quitted")
+		// logrus.Error("already quitted")
 		return
 	}
 	node.quitLock.Lock() // 阻塞stabilize
 	node.online = false
 	var list [sucSize]string
 	node.updateSuccessorList()
+	// node.updatePredecessor()
 	node.sucLock.RLock()
 	for i := 0; i < sucSize; i++ {
 		list[i] = node.successorList[i]
 	}
 	node.sucLock.RUnlock()
-	var predecessorState PredecessorState
-	node.Prodecessor("", &predecessorState)
+	var predecessor string
+	node.Predecessor("", &predecessor)
 	// Inform all the nodes in the network that this node is quitting.
 	var (
 		wg            sync.WaitGroup
@@ -248,11 +248,11 @@ func (node *Node) Quit() {
 		node.dataLock.RUnlock()
 		var reply bool
 		if err := node.RemoteCall(list[0], "Chord.PutAndReplicate", data, &reply); err != nil {
-			logrus.Fatal("call remotely \"PutAndReplicate()\" error when quitting: ", err)
+			// logrus.Error("call remotely \"PutAndReplicate()\" error when quitting: ", err)
 			return
 		}
 		if err := node.RemoteCall(list[0], "Chord.DeleteBackup", keys, &reply); err != nil {
-			logrus.Fatalf("[%s] call remotely \"DeleteBackup()\" error when qutting: %v", list[0], err)
+			// logrus.Errorf("[%s] call remotely \"DeleteBackup()\" error when qutting: %v", list[0], err)
 			return
 		}
 		wg.Done()
@@ -266,31 +266,32 @@ func (node *Node) Quit() {
 		node.dataBackupLock.RUnlock()
 		var reply bool
 		if err := node.RemoteCall(list[0], "Chord.ReplicateData", dataBackup, &reply); err != nil {
-			logrus.Fatalf("[%s] call remotely \"ReplicateData()\" error when quitting: %v", list[0], err)
+			// logrus.Errorf("[%s] call remotely \"ReplicateData()\" error when quitting: %v", list[0], err)
 			return
 		}
+		wg.Done()
 	}()
 	go func() {
-		if predecessorState.Predecessor != "" && predecessorState.Online && node.addr != predecessorState.Predecessor {
-			node.RemoteCall(predecessorState.Predecessor, "Chord.QuitLock", "", nil)
+		if predecessor != "" && node.addr != predecessor {
+			node.RemoteCall(predecessor, "Chord.QuitLock", "", nil)
 			predeQuitLock = true
-			node.RemoteCall(predecessorState.Predecessor, "Chord.ChangeSuccessor", list, nil)
+			node.RemoteCall(predecessor, "Chord.ChangeSuccessor", list, nil)
 		}
 		wg.Done()
 	}()
 	go func() {
 		if list[0] != node.addr {
-			if list[0] != predecessorState.Predecessor {
+			if list[0] != predecessor {
 				node.RemoteCall(list[0], "Chord.QuitLock", "", nil)
 				sucQuitLock = true
 			}
-			node.RemoteCall(list[0], "Chord.ChangeProdecessor", predecessorState, nil)
+			node.RemoteCall(list[0], "Chord.ChangePredecessor", predecessor, nil)
 		}
 		wg.Done()
 	}()
 	wg.Wait()
 	if predeQuitLock {
-		node.RemoteCall(predecessorState.Predecessor, "Chord.QuitUnlock", "", nil)
+		node.RemoteCall(predecessor, "Chord.QuitUnlock", "", nil)
 	}
 	if sucQuitLock {
 		node.RemoteCall(list[0], "Chord.QuitUnlock", "", nil)
@@ -300,9 +301,9 @@ func (node *Node) Quit() {
 }
 
 func (node *Node) ForceQuit() {
-	logrus.Info("ForceQuit")
+	// logrus.Infof("ForceQuit %s", node.addr)
 	if !node.online {
-		logrus.Error("already force-quitted")
+		// logrus.Error("already force-quitted")
 		return
 	}
 	node.online = false
@@ -319,79 +320,66 @@ func (node *Node) maintain() {
 			}
 			node.stabilize()
 			node.quitLock.Unlock()
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 		}
 	}()
 	go func() {
 		for node.online {
 			node.fixFingers()
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 		}
 	}()
 }
 
 func (node *Node) stabilize() {
-	logrus.Infof("stabilize node %s", node.addr)
+	// logrus.Infof("stabilize node %s", node.addr)
+	// node.updateSuccessorList()
+	// node.updatePredecessor()
 	var successor string
-	node.sucLock.RLock()
 	node.Successor("", &successor)
-	node.sucLock.RUnlock()
 	successorId := Hash(successor)
-	var x PredecessorState
-	if err := node.RemoteCall(successor, "Chord.Prodecessor", "", &x); err != nil {
-		logrus.Fatal("call remotely \"Chord.Prodecessor()\" error when stablilizing: ", err)
+	var x string
+	if err := node.RemoteCall(successor, "Chord.Predecessor", "", &x); err != nil {
+		// logrus.Error("call remotely \"Chord.Predecessor()\" error when stablilizing: ", err)
 		return
 	}
-	if successor == node.addr || (x.Predecessor != "" && x.Online && Belong(Hash(x.Predecessor), node.id, successorId, false, false)) {
-		logrus.Infof("change successor when stabilizing")
+	if successor == node.addr || (x != "" && Belong(Hash(x), node.id, successorId, false, false)) {
+		// logrus.Infof("change successor when stabilizing")
 		node.sucLock.Lock()
 		for i := sucSize - 1; i >= 1; i-- {
 			node.successorList[i] = node.successorList[i-1]
 		}
-		node.successorList[0] = x.Predecessor
+		node.successorList[0] = x
 		node.sucLock.Unlock()
-		if err := node.RemoteCall(successor, "Chord.TransferData", x.Predecessor, nil); err != nil {
-			logrus.Fatal("transfer data error when stabilizing: ", err)
+		var reply bool
+		if err := node.RemoteCall(successor, "Chord.TransferData", TransferTarget{x, node.addr}, &reply); err != nil {
+			// logrus.Error("transfer data error when stabilizing: ", err)
 			return
 		}
 	}
-	node.sucLock.RLock()
 	node.Successor("", &successor)
-	node.sucLock.RUnlock()
 	if err := node.RemoteCall(successor, "Chord.Notify", node.addr, nil); err != nil {
-		logrus.Fatal("call remotely \"Chord.Notify()\" error when stabilizing: ", err)
+		// logrus.Error("call remotely \"Chord.Notify()\" error when stabilizing: ", err)
 		return
-	}
-	if !x.Online {
-		var data []Pair
-		node.dataLock.RLock()
-		for key, value := range node.data {
-			data = append(data, Pair{key, value})
-		}
-		node.dataLock.RUnlock()
-		if err := node.RemoteCall(successor, "Chord.ReplicateData", data, nil); err != nil {
-			logrus.Fatalf("[%s] call remotely \"ReplicateData()\" error when stabilizing: %v", successor, err)
-			return
-		}
 	}
 }
 
 func (node *Node) fixFingers() {
 	i := rand.Intn(159) + 2
-	logrus.Infof("fix the %dth finger of node %s", i, node.addr)
+	// logrus.Infof("fix the %dth finger of node %s", i, node.addr)
 	var reply string
 	if err := node.FindSuccessor(node.fingerStart[i], &reply); err != nil {
-		logrus.Fatal("find successor error when fixing fingers: ", err)
+		// logrus.Error("find successor error when fixing fingers: ", err)
 		return
 	}
 	node.fingerLock.Lock()
 	node.finger[i] = reply
-	logrus.Infof("finger[%v] is now %s", i, node.finger[i])
+	// logrus.Infof("finger[%v] is now %s", i, node.finger[i])
 	node.fingerLock.Unlock()
 }
 
-func (node *Node) closestProcedingFinger(id *big.Int) string {
-	logrus.Infof("Find the closest preceding finger to %v of node %s (ID: %v)", id, node.addr, node.id)
+func (node *Node) closestPrecedingFinger(id *big.Int) string {
+	// logrus.Infof("Find the closest preceding finger to %v of node %s (ID: %v)", id, node.addr, node.id)
 	for i := m; i > 1; i-- {
 		node.fingerLock.RLock()
 		fin := node.finger[i]
@@ -404,9 +392,7 @@ func (node *Node) closestProcedingFinger(id *big.Int) string {
 		}
 	}
 	var successor string
-	node.sucLock.RLock()
 	node.Successor("", &successor)
-	node.sucLock.RUnlock()
 	if node.ping(successor) && Belong(Hash(successor), node.id, id, false, false) {
 		return successor
 	}
@@ -414,17 +400,42 @@ func (node *Node) closestProcedingFinger(id *big.Int) string {
 }
 
 func (node *Node) updateSuccessorList() {
-	var list [sucSize]string
+	// logrus.Infof("update successor list of %s", node.addr)
+	var list, nextList [sucSize]string
 	node.SuccessorList("", &list)
 	for i, addr := range list {
-		if node.ping(addr) && i != 0 {
-			node.RemoteCall(addr, "Chord.SuccessorList", "", list)
+		if node.ping(addr) {
+			if err := node.RemoteCall(addr, "Chord.SuccessorList", "", &nextList); err != nil {
+				// logrus.Errorf("[%s] call remotely \"SuccessorList()\" error when updating successor list of %s: %v", addr, node.addr, err)
+				continue
+			}
+			// fmt.Println(list)
 			node.sucLock.Lock()
 			node.successorList[0] = addr
 			for j := 1; j < sucSize; j++ {
-				node.successorList[j] = list[j-1]
+				node.successorList[j] = nextList[j-1]
 			}
 			node.sucLock.Unlock()
+			if i == 1 {
+				node.sucLock.RLock()
+				successor := node.successorList[0]
+				node.sucLock.RUnlock()
+				if err := node.RemoteCall(successor, "Chord.BackupToMain", "", nil); err != nil {
+					// logrus.Errorf("[%s] call remotely \"BackupToMain()\" error when updating successor list of %s: %v", successor, node.addr, err)
+					return
+				}
+				var data []Pair
+				node.dataLock.RLock()
+				for key, value := range node.data {
+					data = append(data, Pair{key, value})
+				}
+				node.dataLock.RUnlock()
+				var reply bool
+				if err := node.RemoteCall(successor, "Chord.ReplicateData", data, &reply); err != nil {
+					// logrus.Errorf("[%s] call remotely \"ReplicateData()\" error when updating successor list of %s: %v", successor, node.addr, err)
+					return
+				}
+			}
 			return
 		}
 	}
@@ -436,22 +447,9 @@ func (node *Node) updatePredecessor() {
 	node.predeLock.RUnlock()
 	if predecessor != "" && !node.ping(predecessor) {
 		node.predeLock.Lock()
-		node.predeOnline = false
+		node.predecessor = ""
 		node.predeLock.Unlock()
 	}
-	var (
-		backup []Pair
-		keys   []string
-	)
-	node.dataBackupLock.RLock()
-	for key, value := range node.dataBackup {
-		backup = append(backup, Pair{key, value})
-		keys = append(keys, key)
-	}
-	node.dataBackupLock.RUnlock()
-	var reply bool
-	node.PutAndReplicate(backup, &reply)
-	node.DeleteBackup(keys, &reply)
 }
 
 //
@@ -478,20 +476,22 @@ func (node *Node) QuitUnlock(_ string, _ *struct{}) error {
 
 func (node *Node) Notify(addr string, reply *struct{}) error {
 	id := Hash(addr)
-	node.predeLock.Lock()
-	predecessorId := Hash(node.predecessor)
-	if node.predecessor == "" || !node.predeOnline || Belong(id, predecessorId, node.id, false, false) {
+	// node.updatePredecessor()
+	var predecessor string
+	node.Predecessor("", &predecessor)
+	predecessorId := Hash(predecessor)
+	if predecessor == "" || Belong(id, predecessorId, node.id, false, false) {
+		node.predeLock.Lock()
 		node.predecessor = addr
-		node.predeOnline = true
+		node.predeLock.Unlock()
 	}
-	node.predeLock.Unlock()
 	return nil
 }
 
 // The difference between Successor() and FindSuccessor() is that
 // Successor() returns successors with regard to nodes
 // FindSuccessor() returns successors with regard to keys
-// And the difference between Prodecessor() and FindProdecessor() is the same as above
+// And the difference between Predecessor() and FindPredecessor() is the same as above
 func (node *Node) Successor(_ string, reply *string) error {
 	node.updateSuccessorList()
 	node.sucLock.RLock()
@@ -500,10 +500,10 @@ func (node *Node) Successor(_ string, reply *string) error {
 	return nil
 }
 
-func (node *Node) Prodecessor(_ string, reply *PredecessorState) error {
+func (node *Node) Predecessor(_ string, reply *string) error {
 	node.updatePredecessor()
 	node.predeLock.RLock()
-	*reply = PredecessorState{node.predecessor, node.predeOnline}
+	*reply = node.predecessor
 	node.predeLock.RUnlock()
 	return nil
 }
@@ -516,35 +516,33 @@ func (node *Node) SuccessorList(_ string, reply *[sucSize]string) error {
 }
 
 func (node *Node) FindSuccessor(id *big.Int, reply *string) error {
-	logrus.Infof("Find successor of %v from node %s (ID: %v)", id, node.addr, node.id)
+	// logrus.Infof("Find successor of %v from node %s (ID: %v)", id, node.addr, node.id)
 	if id.Cmp(node.id) == 0 {
 		*reply = node.addr
 		return nil
 	}
-	if err := node.FindProdecessor(id, reply); err != nil {
-		logrus.Fatal("find predecessor error when looking for successor: ", err)
+	if err := node.FindPredecessor(id, reply); err != nil {
+		// logrus.Error("find predecessor error when looking for successor: ", err)
 		return err
 	}
 	if err := node.RemoteCall(*reply, "Chord.Successor", "", reply); err != nil {
-		logrus.Fatal("call remotely \"Chord.Successor()\" error when looking for successor: ", err)
+		// logrus.Error("call remotely \"Chord.Successor()\" error when looking for successor: ", err)
 		return err
 	}
 	return nil
 }
 
-func (node *Node) FindProdecessor(id *big.Int, reply *string) error {
-	logrus.Infof("Find predecessor of %v from node %s (ID: %v)", id, node.addr, node.id)
+func (node *Node) FindPredecessor(id *big.Int, reply *string) error {
+	// logrus.Infof("Find predecessor of %v from node %s (ID: %v)", id, node.addr, node.id)
 	*reply = node.addr
 	var successor string
-	node.sucLock.RLock()
 	node.Successor("", &successor)
-	node.sucLock.RUnlock()
 	// fmt.Println(node.id.Cmp(Hash(successor)))
 	if !Belong(id, node.id, Hash(successor), false, true) {
-		var closest string = node.closestProcedingFinger(id)
-		logrus.Infof("closest finger of node %s to ID %v : %s", node.addr, id, closest)
-		if err := node.RemoteCall(closest, "Chord.FindProdecessor", id, reply); err != nil {
-			logrus.Fatal("call remotely \"Chord.FindProdecessor()\" error when looking for succesor: ", err)
+		var closest string = node.closestPrecedingFinger(id)
+		// logrus.Infof("closest finger of node %s to ID %v : %s", node.addr, id, closest)
+		if err := node.RemoteCall(closest, "Chord.FindPredecessor", id, reply); err != nil {
+			// logrus.Error("call remotely \"Chord.FindPredecessor()\" error when looking for succesor: ", err)
 			return err
 		}
 	}
@@ -561,10 +559,9 @@ func (node *Node) ChangeSuccessor(sucList [sucSize]string, _ *struct{}) error {
 	return nil
 }
 
-func (node *Node) ChangeProdecessor(prede PredecessorState, _ *struct{}) error {
+func (node *Node) ChangePredecessor(prede string, _ *struct{}) error {
 	node.predeLock.Lock()
-	node.predecessor = prede.Predecessor
-	node.predeOnline = prede.Online
+	node.predecessor = prede
 	node.predeLock.Unlock()
 	return nil
 }
@@ -595,7 +592,7 @@ func (node *Node) PutAndReplicate(pair []Pair, reply *bool) error {
 	var successor string
 	node.Successor("", &successor)
 	if err := node.RemoteCall(successor, "Chord.ReplicateData", pair, &ret); err != nil {
-		logrus.Fatal("call remotely \"ReplicatePair()\" error: ", err)
+		// logrus.Error("call remotely \"ReplicatePair()\" error: ", err)
 		return err
 	}
 	*reply = *reply && ret
@@ -608,6 +605,20 @@ func (node *Node) GetPair(key string, reply *ValueReply) error {
 	node.dataLock.RUnlock()
 	*reply = ValueReply{value, ok}
 	return nil
+}
+
+func (node *Node) BackupToMain(_ string, reply *struct{}) error {
+	var backup []Pair
+	node.dataBackupLock.RLock()
+	for key, value := range node.dataBackup {
+		backup = append(backup, Pair{key, value})
+	}
+	node.dataBackupLock.RUnlock()
+	node.dataBackupLock.Lock()
+	node.dataBackup = make(map[string]string)
+	node.dataBackupLock.Unlock()
+	var ret bool
+	return node.PutAndReplicate(backup, &ret)
 }
 
 func (node *Node) DeleteData(keys []string, reply *bool) error {
@@ -646,7 +657,7 @@ func (node *Node) DeleteAllData(keys []string, reply *bool) error {
 	var successor string
 	node.Successor("", &successor)
 	if err := node.RemoteCall(successor, "Chord.DeleteBackup", keys, &ret); err != nil {
-		logrus.Fatalf("[%s] delete backup data error when deleting all data of %s", successor, node.addr)
+		// logrus.Errorf("[%s] delete backup data error when deleting all data of %s", successor, node.addr)
 		return err
 	}
 	*reply = *reply && ret
@@ -654,44 +665,39 @@ func (node *Node) DeleteAllData(keys []string, reply *bool) error {
 }
 
 // transfer data to the predecessor after changing the successor
-func (node *Node) TransferData(target string, reply *bool) error {
-	targetId := Hash(target)
-	var data []Pair
-	var keys []string
+func (node *Node) TransferData(target TransferTarget, reply *bool) error {
+	preId := Hash(target.Pre)
+	prepreId := Hash(target.Prepre)
+	var data, dataBackup []Pair
+	var keys, keysBackup []string
 	node.dataLock.RLock()
 	for key, value := range node.data {
-		if !Belong(Hash(key), targetId, node.id, false, true) {
+		if !Belong(Hash(key), preId, node.id, false, true) {
 			data = append(data, Pair{key, value})
 			keys = append(keys, key)
 		}
 	}
 	node.dataLock.RUnlock()
-	// transfer data of the current node
-	var deleteData, putData bool
-	node.DeleteData(keys, &deleteData)
-	if err := node.RemoteCall(target, "Chord.PutData", data, &putData); err != nil {
-		logrus.Fatal("call remotely \"PutData()\" error when transferring data: ", err)
+	var deleteData, putData, replicateData, deleteBackup, replicateBackup bool
+	node.DeleteAllData(keys, &deleteData)
+	if err := node.RemoteCall(target.Pre, "Chord.PutData", data, &putData); err != nil {
+		// logrus.Error("call remotely \"PutData()\" error when transferring data: ", err)
 		return err
 	}
-	// transfer data backup of the current node
-	var (
-		targetSuc, successor            string
-		replicateData, deleteDataBackup bool
-	)
-	if err := node.RemoteCall(target, "Chord.Successor", "", &targetSuc); err != nil {
-		logrus.Fatalf("[%s] call remotely \"Successor()\" error when transferring data backup: %v", target, err)
+	node.ReplicateData(data, &replicateData)
+	node.dataBackupLock.RLock()
+	for key, value := range node.dataBackup {
+		if !Belong(Hash(key), prepreId, preId, false, true) {
+			dataBackup = append(dataBackup, Pair{key, value})
+			keysBackup = append(keysBackup, key)
+		}
+	}
+	node.dataBackupLock.RUnlock()
+	node.DeleteBackup(keysBackup, &deleteBackup)
+	if err := node.RemoteCall(target.Pre, "Chord.ReplicateData", dataBackup, &replicateBackup); err != nil {
+		// logrus.Errorf("[%s] call remotely \"ReplicateData()\" error when transferring data: %v", target.Pre, err)
 		return err
 	}
-	if err := node.RemoteCall(targetSuc, "Chord.ReplicateData", data, &replicateData); err != nil {
-		logrus.Fatalf("[%s] call remotely \"replicateData()\" error when transferring data backup: %v", targetSuc, err)
-		return err
-	}
-	node.Successor("", &successor)
-	if err := node.RemoteCall(successor, "Chord.DeleteBackup", keys, &deleteDataBackup); err != nil {
-		logrus.Fatalf("[%s] call remotely \"DeleteBackup()\" error when transferring data backup : %v", successor, err)
-		return err
-	}
-	*reply = deleteData && putData && deleteDataBackup && replicateData
 	return nil
 }
 
@@ -705,4 +711,14 @@ func (node *Node) Ping(_ string, _ *struct{}) error {
 		return nil
 	}
 	return errors.New("Offline")
+}
+
+func (node *Node) Traverse(str string, reply *struct{}) error {
+	fmt.Println(node.addr)
+	if node.successorList[0] == str {
+		fmt.Println("------------------------------")
+		return nil
+	}
+	node.RemoteCall(node.successorList[0], "Chord.Traverse", str, nil)
+	return nil
 }

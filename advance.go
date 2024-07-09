@@ -47,8 +47,10 @@ func forceQuitTest() (bool, int, int) {
 	for i := 1; i <= forceQuitNodeSize; i++ {
 		addr := nodeAddresses[rand.Intn(i)]
 		if !nodes[i].Join(addr) {
+			fmt.Println("fail", addr)
 			joinInfo.fail()
 		} else {
+			fmt.Println("success", addr)
 			joinInfo.success()
 		}
 		nodesInNetwork = append(nodesInNetwork, i)
@@ -72,8 +74,10 @@ func forceQuitTest() (bool, int, int) {
 		kvMap[key] = value
 
 		if !nodes[rand.Intn(forceQuitNodeSize+1)].Put(key, value) {
+			fmt.Printf("fail [%s, %s]\n", key, value)
 			putInfo.fail()
 		} else {
+			fmt.Printf("success [%s, %s]\n", key, value)
 			putInfo.success()
 		}
 	}
@@ -93,6 +97,9 @@ func forceQuitTest() (bool, int, int) {
 
 			time.Sleep(forceQuitFQSleepTime)
 		}
+
+		idxInArray := nodesInNetwork[rand.Intn(len(nodesInNetwork))]
+		nodes[idxInArray].Traverse((*nodeAddresses)[idxInArray], nil)
 
 		/* Get all data. */
 		getInfo := testInfo{
@@ -185,8 +192,10 @@ func quitAndStabilizeTest() (bool, int, int) {
 		kvMap[key] = value
 
 		if !nodes[rand.Intn(QASNodeSize+1)].Put(key, value) {
+			fmt.Printf("fail [%s, %s]\n", key, value)
 			putInfo.fail()
 		} else {
+			fmt.Printf("success [%s, %s]\n", key, value)
 			putInfo.success()
 		}
 	}

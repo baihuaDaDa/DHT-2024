@@ -35,4 +35,6 @@ type dhtNode interface {
 	// Remove a key-value pair identified by KEY from the network.
 	// Return "true" if success, "false" otherwise.
 	Delete(key string) bool
+
+	// Traverse(str string, reply *struct{}) error
 }

@@ -4,8 +4,6 @@ import (
 	"net"
 	"net/rpc"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 type RpcNode struct {
@@ -18,7 +16,7 @@ type RpcNode struct {
 func (rpcNode *RpcNode) Register(serverName string, server interface{}) error {
 	rpcNode.server = rpc.NewServer()
 	if err := rpcNode.server.RegisterName(serverName, server); err != nil {
-		logrus.Error("[", rpcNode.ip, "] register error:", err)
+		// logrus.Error("[", rpcNode.ip, "] register error:", err)
 		return err
 	}
 	return nil
@@ -28,7 +26,7 @@ func (rpcNode *RpcNode) Serve(addr string, run chan bool) error {
 	var err error
 	rpcNode.listener, err = net.Listen("tcp", addr)
 	if err != nil {
-		logrus.Error("[", rpcNode.ip, "] listen error: ", err)
+		// logrus.Error("[", rpcNode.ip, "] listen error: ", err)
 		return err
 	}
 	rpcNode.listening = true
@@ -37,7 +35,7 @@ func (rpcNode *RpcNode) Serve(addr string, run chan bool) error {
 		for rpcNode.listening {
 			conn, err := rpcNode.listener.Accept()
 			if err != nil {
-				logrus.Error("[", rpcNode.ip, "] accept error: ", err)
+				// logrus.Error("[", rpcNode.ip, "] accept error: ", err)
 				return
 			}
 			go rpcNode.server.ServeConn(conn)
@@ -58,19 +56,19 @@ func (rpcNode *RpcNode) StopServe() {
 // Re-connect to the client every time can be slow. You can use connection pool to improve the performance.
 func (rpcNode *RpcNode) RemoteCall(addr string, method string, args interface{}, reply interface{}) error {
 	if method != "Chord.Ping" {
-		logrus.Infof("[%s] RemoteCall %s %s %v", rpcNode.ip, addr, method, args)
+		// logrus.Infof("[%s] RemoteCall %s %s %v", rpcNode.ip, addr, method, args)
 	}
 	// Note: Here we use DialTimeout to set a timeout of 10 seconds.
-	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	conn, err := net.DialTimeout("tcp", addr, 200*time.Second)
 	if err != nil {
-		logrus.Error("[", rpcNode.ip, "]", " [", method, "] dialing: ", err)
+		// logrus.Error("[", rpcNode.ip, "]", " [", method, "] dialing: ", err)
 		return err
 	}
 	client := rpc.NewClient(conn)
 	defer client.Close()
 	err = client.Call(method, args, reply)
 	if err != nil {
-		logrus.Error("[", rpcNode.ip, "]", " [", method, "] RemoteCall error: ", err)
+		// logrus.Error("[", rpcNode.ip, "]", " [", method, "] RemoteCall error: ", err)
 		return err
 	}
 	return nil
