@@ -36,5 +36,5 @@ type dhtNode interface {
 	// Return "true" if success, "false" otherwise.
 	Delete(key string) bool
 
-	// Traverse(str string, reply *struct{}) error
+	Traverse(str string, reply *struct{}) error
 }

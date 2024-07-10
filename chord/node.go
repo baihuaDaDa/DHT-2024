@@ -234,8 +234,19 @@ func (node *Node) Quit() {
 		predeQuitLock bool = false
 		sucQuitLock   bool = false
 	)
+	defer func() {
+		if predeQuitLock {
+			node.RemoteCall(predecessor, "Chord.QuitUnlock", "", nil)
+		}
+		if sucQuitLock {
+			node.RemoteCall(list[0], "Chord.QuitUnlock", "", nil)
+		}
+		node.StopServe()
+		node.quitLock.Unlock()
+	}()
 	wg.Add(4)
 	go func() {
+		defer wg.Done()
 		var (
 			data []Pair
 			keys []string
@@ -255,9 +266,9 @@ func (node *Node) Quit() {
 			// logrus.Errorf("[%s] call remotely \"DeleteBackup()\" error when qutting: %v", list[0], err)
 			return
 		}
-		wg.Done()
 	}()
 	go func() {
+		defer wg.Done()
 		var dataBackup []Pair
 		node.dataBackupLock.RLock()
 		for key, value := range node.dataBackup {
@@ -269,17 +280,17 @@ func (node *Node) Quit() {
 			// logrus.Errorf("[%s] call remotely \"ReplicateData()\" error when quitting: %v", list[0], err)
 			return
 		}
-		wg.Done()
 	}()
 	go func() {
+		defer wg.Done()
 		if predecessor != "" && node.addr != predecessor {
 			node.RemoteCall(predecessor, "Chord.QuitLock", "", nil)
 			predeQuitLock = true
-			node.RemoteCall(predecessor, "Chord.ChangeSuccessor", list, nil)
+			node.RemoteCall(predecessor, "Chord.ChangeSuccessorList", list, nil)
 		}
-		wg.Done()
 	}()
 	go func() {
+		defer wg.Done()
 		if list[0] != node.addr {
 			if list[0] != predecessor {
 				node.RemoteCall(list[0], "Chord.QuitLock", "", nil)
@@ -287,17 +298,8 @@ func (node *Node) Quit() {
 			}
 			node.RemoteCall(list[0], "Chord.ChangePredecessor", predecessor, nil)
 		}
-		wg.Done()
 	}()
 	wg.Wait()
-	if predeQuitLock {
-		node.RemoteCall(predecessor, "Chord.QuitUnlock", "", nil)
-	}
-	if sucQuitLock {
-		node.RemoteCall(list[0], "Chord.QuitUnlock", "", nil)
-	}
-	node.StopServe()
-	node.quitLock.Unlock()
 }
 
 func (node *Node) ForceQuit() {
@@ -550,7 +552,7 @@ func (node *Node) FindPredecessor(id *big.Int, reply *string) error {
 	return nil
 }
 
-func (node *Node) ChangeSuccessor(sucList [sucSize]string, _ *struct{}) error {
+func (node *Node) ChangeSuccessorList(sucList [sucSize]string, _ *struct{}) error {
 	node.sucLock.Lock()
 	for i := 0; i < sucSize; i++ {
 		node.successorList[i] = sucList[i]
@@ -702,8 +704,11 @@ func (node *Node) TransferData(target TransferTarget, reply *bool) error {
 }
 
 func (node *Node) ping(addr string) bool {
-	err := node.RemoteCall(addr, "Chord.Ping", "", nil)
-	return err == nil
+	if err := node.RemoteCall(addr, "Chord.Ping", "", nil); err != nil {
+		err = node.RemoteCall(addr, "Chord.Ping", "", nil)
+		return err == nil
+	}
+	return true
 }
 
 func (node *Node) Ping(_ string, _ *struct{}) error {

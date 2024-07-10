@@ -69,6 +69,9 @@ func basicTest() (bool, int, int) {
 
 		time.Sleep(basicTestAfterJoinQuitSleepTime)
 
+		idxInArray := nodesInNetwork[rand.Intn(len(nodesInNetwork))]
+		nodes[idxInArray].Traverse((*nodeAddresses)[idxInArray], nil)
+
 		/* Put, part 1. */
 		put1Info := testInfo{
 			msg:       fmt.Sprintf("Put (round %d, part 1)", t),
@@ -150,6 +153,9 @@ func basicTest() (bool, int, int) {
 		}
 		green.Printf("Quit (round %d) passed.\n", t)
 		time.Sleep(basicTestAfterJoinQuitSleepTime)
+
+		idxInArray = nodesInNetwork[rand.Intn(len(nodesInNetwork))]
+		nodes[idxInArray].Traverse((*nodeAddresses)[idxInArray], nil)
 
 		/* Put, part 2. */
 		put2Info := testInfo{
