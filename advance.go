@@ -111,8 +111,10 @@ func forceQuitTest() (bool, int, int) {
 		for key, value := range kvMap {
 			ok, res := nodes[nodesInNetwork[rand.Intn(len(nodesInNetwork))]].Get(key)
 			if !ok || res != value {
+				fmt.Printf("fail [%s, %s]\n ans [%s, %s]\n", key, res, key, value)
 				getInfo.fail()
 			} else {
+				fmt.Printf("success [%s, %s]\n", key, value)
 				getInfo.success()
 			}
 		}

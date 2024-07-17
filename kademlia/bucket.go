@@ -27,12 +27,18 @@ func (bucket *Bucket) pushBack(addr string) {
 func (bucket *Bucket) popFront() {
 	bucket.bucketLock.Lock()
 	defer bucket.bucketLock.Unlock()
+	if bucket.list.Front() == nil {
+		return
+	}
 	bucket.list.Remove(bucket.list.Front())
 }
 
 func (bucket *Bucket) shiftToBack() {
 	bucket.bucketLock.Lock()
 	defer bucket.bucketLock.Unlock()
+	if bucket.list.Front() == nil {
+		return
+	}
 	bucket.list.MoveAfter(bucket.list.Front(), bucket.list.Back())
 }
 
@@ -62,7 +68,16 @@ func (bucket *Bucket) delete(addr string) bool {
 func (bucket *Bucket) front() string {
 	bucket.bucketLock.RLock()
 	defer bucket.bucketLock.RUnlock()
+	if bucket.list.Front() == nil {
+		return ""
+	}
 	return bucket.list.Front().Value.(string)
+}
+
+func (bucket *Bucket) empty() bool {
+	bucket.bucketLock.RLock()
+	defer bucket.bucketLock.RUnlock()
+	return bucket.list.Len() == 0
 }
 
 func (bucket *Bucket) size() int {
@@ -95,7 +110,7 @@ func (bucket *Bucket) flush(addr string, online bool) {
 
 func (bucket *Bucket) getAll() (nodeList []string) {
 	bucket.bucketLock.RLock()
-	defer bucket.bucketLock.Unlock()
+	defer bucket.bucketLock.RUnlock()
 	for unit := bucket.list.Front(); unit != nil; unit = unit.Next() {
 		nodeList = append(nodeList, unit.Value.(string))
 	}

@@ -2,6 +2,8 @@ package kademlia
 
 import (
 	rpc "dht/rpcNode"
+	"encoding/gob"
+	"time"
 
 	"math/big"
 	"os"
@@ -11,13 +13,17 @@ import (
 )
 
 func init() {
+	gob.Register(new(big.Int))
+	var pair Pair
+	gob.Register(pair)
 	f, _ := os.Create("dht-test.log")
 	logrus.SetOutput(f)
 }
 
 const (
-	k     int = 20
-	alpha int = 3
+	k        int           = 20
+	alpha    int           = 3
+	tRefresh time.Duration = 15 * time.Second
 )
 
 type ValueResult struct {
@@ -42,24 +48,26 @@ type Node struct {
 	online bool
 	run    chan bool
 	rpc.RpcNode
-	data     Data
-	kBuckets [m + 1]Bucket
+	data         Data
+	kBuckets     [m]Bucket
+	refreshIndex int
 }
 
 func (node *Node) Init(addr string) {
-	logrus.Infof("Init %s", addr)
+	// logrus.Infof("Init %s", addr)
 	node.addr = addr
 	node.id = Hash(node.addr)
 	node.online = false
 }
 
 func (node *Node) reset() {
-	logrus.Infof("Refresh %s", node.addr)
+	// logrus.Infof("Refresh %s", node.addr)
 	node.run = make(chan bool, 1)
 	node.data.init()
 	for i := range node.kBuckets {
 		node.kBuckets[i].init(node)
 	}
+	node.refreshIndex = 150
 }
 
 //
@@ -67,7 +75,7 @@ func (node *Node) reset() {
 //
 
 func (node *Node) Run() {
-	logrus.Infof("Run %s", node.addr)
+	// logrus.Infof("Run %s", node.addr)
 	node.reset()
 	node.online = true
 	node.Register("Kademlia", &RpcInterface{node})
@@ -75,45 +83,54 @@ func (node *Node) Run() {
 }
 
 func (node *Node) Create() {
-	logrus.Infof("Create")
+	// logrus.Infof("Create")
 	<-node.run
-	// node.maintain()
+	node.maintain()
 }
 
 func (node *Node) Join(addr string) bool {
-	logrus.Infof("Join %s to %s", node.addr, addr)
+	// logrus.Infof("Join %s to %s", node.addr, addr)
 	<-node.run
 	i := Locate(node.id, Hash(addr))
+	// fmt.Print(i)
 	node.kBuckets[i].pushBack(addr)
 	node.nodeLookup(node.id)
-	// node.maintain()
+	node.maintain()
 	return true
 }
 
 // 如果直接找到了key不能直接返回，而是需要修改所有key对应的value的数据
 func (node *Node) Put(key string, value string) bool {
-	logrus.Infof("Put %s %s", key, value)
+	// logrus.Infof("Put %s %s", key, value)
 	return node.publishData(Pair{key, value})
 }
 
 func (node *Node) Get(key string) (bool, string) {
-	logrus.Infof("Get %s", key)
+	// logrus.Infof("Get %s", key)
 	result := node.valueLookup(key)
 	if result.Found {
 		return true, result.Value
+	}
+	var readResult ReadResult
+	for _, addr := range result.NodeList {
+		if err := node.RemoteCall(addr, "Kademlia.Read", RpcPair{node.addr, key}, &readResult); err == nil {
+			if readResult.Ok {
+				return true, readResult.Value
+			}
+		}
 	}
 	return false, ""
 }
 
 func (node *Node) Delete(key string) bool {
-	logrus.Infof("Delete %s but nothing happens", key)
+	// logrus.Infof("Delete %s but nothing happens", key)
 	return true
 }
 
 func (node *Node) Quit() {
-	logrus.Infof("Quit %s", node.addr)
+	// logrus.Infof("Quit %s", node.addr)
 	if !node.online {
-		logrus.Error("already quitted")
+		// logrus.Error("already quitted")
 		return
 	}
 	node.online = false
@@ -122,9 +139,9 @@ func (node *Node) Quit() {
 }
 
 func (node *Node) ForceQuit() {
-	logrus.Infof("ForceQuit %s", node.addr)
+	// logrus.Infof("ForceQuit %s", node.addr)
 	if !node.online {
-		logrus.Error("already force-quitted")
+		// logrus.Error("already force-quitted")
 		return
 	}
 	node.online = false
@@ -139,9 +156,17 @@ func (node *Node) Traverse(str string, reply *struct{}) error {
 // 不能返回requester
 func (node *Node) FindNode(id *big.Int) (nodeList []string) {
 	i := Locate(node.id, id)
+	// logrus.Infof("find closest nodes of %v from %s (bucket[%d])", id, node.addr, i)
+	defer func() {
+		log := "FindNode result [" + node.addr + "]: "
+		for j := range nodeList {
+			log = log + nodeList[j] + "||"
+		}
+		// logrus.Info(log)
+	}()
 	var bucket []string
 	if i == -1 {
-		nodeList = append(nodeList, node.addr)
+		// nodeList = append(nodeList, node.addr)
 	} else {
 		bucket = node.kBuckets[i].getAll()
 		nodeList = append(nodeList, bucket...)
@@ -167,37 +192,50 @@ func (node *Node) FindNode(id *big.Int) (nodeList []string) {
 			}
 		}
 	}
-	if i != -1 {
-		nodeList = append(nodeList, node.addr)
-	}
+	// if i != -1 {
+	// 	nodeList = append(nodeList, node.addr)
+	// }
 	return nodeList
 }
 
 func (node *Node) nodeLookup(id *big.Int) (nodeList []string) {
+	// logrus.Infof("node lookup of %v from %s", id, node.addr)
 	var (
 		set         Set
 		closestNode string
 	)
-	set.init()
+	set.init(node.id)
 	list := node.FindNode(id)
-	set.insert(node.addr)
+	set.mark(node.addr)
 	for i := range list {
 		set.insert(list[i])
 	}
 	for {
 		closestNode = set.getFront()
 		callList := set.getCallList()
+		log := "getCallList result [" + node.addr + "]: "
+		for i := range callList {
+			log = log + callList[i] + "||"
+		}
+		// logrus.Info(log)
 		node.findNodeList(&set, callList, id)
-		if set.getFront() == closestNode {
+		if set.empty() || set.getFront() == closestNode {
 			callList = set.getCallList()
-			nodeList = node.findNodeList(&set, callList, id)
+			node.findNodeList(&set, callList, id)
+			nodeList = set.getNodeList()
 			break
 		}
 	}
+	log := "nodeLookup result [" + node.addr + "]: "
+	for i := range nodeList {
+		log = log + nodeList[i] + "||"
+	}
+	// logrus.Info(log)
 	return nodeList
 }
 
-func (node *Node) findNodeList(set *Set, callList []string, id *big.Int) (nodeList []string) {
+func (node *Node) findNodeList(set *Set, callList []string, id *big.Int) {
+	// logrus.Infof("find node list of %v from %s", id, node.addr)
 	var wg sync.WaitGroup
 	for i := range callList {
 		wg.Add(1)
@@ -211,18 +249,16 @@ func (node *Node) findNodeList(set *Set, callList []string, id *big.Int) (nodeLi
 			}
 			node.flush(addr, true)
 			for j := range subNodeList {
-				if set.insert(subNodeList[j]) {
-					nodeList = append(nodeList, subNodeList[j])
-				}
+				set.insert(subNodeList[j])
 			}
 		}(callList[i])
 	}
 	wg.Wait()
-	return nodeList[:k]
 }
 
 // RPC
 func (node *Node) FindValue(key string) ValueResult {
+	// logrus.Infof("find value of %s from %s", key, node.addr)
 	value, ok := node.data.get(key)
 	if ok {
 		return ValueResult{[]string{}, value, true}
@@ -232,45 +268,56 @@ func (node *Node) FindValue(key string) ValueResult {
 
 // RPC
 func (node *Node) Store(pair Pair) {
+	// logrus.Infof("Store [%s, %s] into %s", pair.Key, pair.Value, node.addr)
 	node.data.put(pair)
 }
 
 // RPC
 func (node *Node) Read(key string) ReadResult {
+	// logrus.Infof("Read %s from %s", key, node.addr)
 	value, ok := node.data.get(key)
+	// logrus.Infof("Read result of %s: [%s, %s]", node.addr, key, value)
 	return ReadResult{value, ok}
 }
 
 func (node *Node) valueLookup(key string) ValueResult {
+	// logrus.Infof("value lookup of %s from %s", key, node.addr)
 	var (
 		set         Set
 		closestNode string
 	)
-	set.init()
+	set.init(node.id)
 	result := node.FindValue(key)
 	if result.Found {
 		return result
 	}
-	set.insert(node.addr)
+	set.mark(node.addr)
 	for i := range result.NodeList {
 		set.insert(result.NodeList[i])
 	}
 	for {
 		closestNode = set.getFront()
 		callList := set.getCallList()
-		nodeList, value, found := node.findValueList(&set, callList, key)
+		value, found := node.findValueList(&set, callList, key)
 		if found {
-			return ValueResult{nodeList, value, found}
+			return ValueResult{[]string{}, value, found}
 		}
-		if closestNode == set.getFront() {
+		if set.empty() || closestNode == set.getFront() {
 			callList = set.getCallList()
-			nodeList, value, found = node.findValueList(&set, callList, key)
+			value, found = node.findValueList(&set, callList, key)
+			nodeList := set.getNodeList()
+			log := "valueLookup result [" + node.addr + "]: "
+			for i := range nodeList {
+				log = log + nodeList[i] + "||"
+			}
+			// logrus.Info(log)
 			return ValueResult{nodeList, value, found}
 		}
 	}
 }
 
-func (node *Node) findValueList(set *Set, callList []string, key string) (nodeList []string, value string, found bool) {
+func (node *Node) findValueList(set *Set, callList []string, key string) (value string, found bool) {
+	// logrus.Infof("find value list of %s from %s", key, node.addr)
 	found = false
 	for i := range callList {
 		var result ValueResult
@@ -283,24 +330,24 @@ func (node *Node) findValueList(set *Set, callList []string, key string) (nodeLi
 		if result.Found {
 			value = result.Value
 			found = true
-			return nodeList, value, found
+			return value, found
 		}
 		for j := range result.NodeList {
-			if set.insert(result.NodeList[j]) {
-				nodeList = append(nodeList, result.NodeList[j])
-			}
+			set.insert(result.NodeList[j])
 		}
 	}
-	return nodeList[:k], value, found
+	return value, found
 }
 
 func (node *Node) publishData(pair Pair) bool {
+	// logrus.Infof("publish [%s, %s] from %s", pair.Key, pair.Value, node.addr)
 	nodeList := node.nodeLookup(Hash(pair.Key))
 	flag := false
 	var wg sync.WaitGroup
 	for i := range nodeList {
 		wg.Add(1)
 		go func(addr string) {
+			// fmt.Print(addr)
 			defer wg.Done()
 			if addr == node.addr {
 				node.Store(pair)
@@ -320,6 +367,7 @@ func (node *Node) publishData(pair Pair) bool {
 }
 
 func (node *Node) republish(republishList []Pair) {
+	// logrus.Infof("republish %s", node.addr)
 	var wg sync.WaitGroup
 	for _, pair := range republishList {
 		wg.Add(1)
@@ -331,10 +379,17 @@ func (node *Node) republish(republishList []Pair) {
 	wg.Wait()
 }
 
+// 基本上只有150-159范围内的bucket
 func (node *Node) refresh() {
+	// logrus.Infof("refresh %s", node.addr)
+	if node.kBuckets[node.refreshIndex].size() < 2 {
+		node.nodeLookup(exp[node.refreshIndex])
+	}
+	node.refreshIndex = (node.refreshIndex-149)%10 + 150
 }
 
 func (node *Node) expire() {
+	// logrus.Infof("expire %s", node.addr)
 	node.data.expire()
 }
 
@@ -349,18 +404,19 @@ func (node *Node) maintain() {
 	go func() {
 		for node.online {
 			node.refresh()
+			time.Sleep(tRefresh)
 		}
 	}()
-	go func() {
-		for node.online {
-			node.republish(node.data.getRepublishList())
-		}
-	}()
-	go func() {
-		for node.online {
-			node.expire()
-		}
-	}()
+	// go func() {
+	// 	for node.online {
+	// 		node.republish(node.data.getRepublishList())
+	// 	}
+	// }()
+	// go func() {
+	// 	for node.online {
+	// 		node.expire()
+	// 	}
+	// }()
 }
 
 func (node *Node) ping(addr string) bool {

@@ -3,6 +3,8 @@ package kademlia
 import (
 	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 type Data struct {
@@ -68,6 +70,7 @@ func (data *Data) expire() {
 	data.dataLock.RUnlock()
 	data.dataLock.Lock()
 	for i := range expireList {
+		logrus.Infof("expire %s", expireList[i])
 		delete(data.dataSet, expireList[i])
 		delete(data.ExpireTime, expireList[i])
 		delete(data.RepublishTime, expireList[i])
