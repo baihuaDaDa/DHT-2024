@@ -1,4 +1,4 @@
-package main
+package test
 
 import (
 	"flag"
@@ -26,8 +26,7 @@ func init() {
 
 	rand.Seed(time.Now().UnixNano())
 }
-
-func main() {
+func Test() {
 	yellow.Printf("Welcome to DHT-2023 Test Program!\n\n")
 
 	var basicFailRate float64

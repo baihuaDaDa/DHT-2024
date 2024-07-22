@@ -1,4 +1,4 @@
-package main
+package application
 
 type dhtNode interface {
 	// "Run" is called after calling "NewNode". You can do some initialization works here.
@@ -35,6 +35,4 @@ type dhtNode interface {
 	// Remove a key-value pair identified by KEY from the network.
 	// Return "true" if success, "false" otherwise.
 	Delete(key string) bool
-
-	Traverse(str string, reply *struct{}) error
 }
